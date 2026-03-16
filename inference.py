@@ -10,9 +10,9 @@ inference.py
 3) 在终端中进行多轮交互式对话，并流式输出生成结果。
 
 示例：
-  python inference.py \
-    --base-model Qwen/Qwen2.5-1.5B-Instruct \
-    --adapter-path outputs/qwen25_prompt_optimizer \
+    python inference.py \
+        --base-model Qwen/Qwen2.5-7B-Instruct \
+        --adapter-path outputs/qwen25_7b_prompt_optimizer \
     --max-new-tokens 384
 """
 
@@ -32,8 +32,8 @@ from transformers import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LoRA 推理 + 多轮终端对话")
-    parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
-    parser.add_argument("--adapter-path", type=str, default="outputs/qwen25_prompt_optimizer")
+    parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-7B-Instruct")
+    parser.add_argument("--adapter-path", type=str, default="outputs/qwen25_7b_prompt_optimizer")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--max-new-tokens", type=int, default=384)

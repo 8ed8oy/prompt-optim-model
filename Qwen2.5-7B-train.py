@@ -5,58 +5,44 @@
 train.py
 
 用途：
-使用 QLoRA（4-bit + LoRA）在 Qwen2.5-1.5B-Instruct 上进行 SFT 微调。
-设计目标：12GB 显存环境可稳定运行，并支持断点恢复训练。
+使用 Unsloth + QLoRA（4-bit + LoRA）在 Qwen2.5-7B-Instruct 上进行 SFT 微调。
+设计目标：在有限显存环境稳定运行，并支持断点恢复训练。
 
 依赖：
-  pip install torch transformers datasets peft trl bitsandbytes accelerate
-
-示例：
-  python train.py \
-    --model-name Qwen/Qwen2.5-1.5B-Instruct \
-    --train-file train_data.jsonl \
-    --output-dir outputs/qwen25_prompt_optimizer \
-    --max-seq-length 1024 \
-    --num-train-epochs 3
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+    pip install unsloth datasets trl accelerate
 """
 
 import argparse
 import json
-import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
-)
-from trl import SFTTrainer
+from trl import SFTConfig, SFTTrainer
+import unsloth
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="QLoRA SFT 训练脚本（12GB 显存优化）")
-    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser = argparse.ArgumentParser(description="QLoRA SFT 训练脚本（Qwen2.5-7B 显存优化）")
+    parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-7B-Instruct")
     parser.add_argument("--train-file", type=str, default="train_data.jsonl")
-    parser.add_argument("--output-dir", type=str, default="outputs/qwen25_prompt_optimizer")
-    parser.add_argument("--max-seq-length", type=int, default=1024)
+    parser.add_argument("--output-dir", type=str, default="outputs/qwen25_7b_prompt_optimizer")
+    parser.add_argument("--max-seq-length", type=int, default=384)
     parser.add_argument("--num-train-epochs", type=float, default=3.0)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--per-device-train-batch-size", type=int, default=2)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=18)
     parser.add_argument("--warmup-ratio", type=float, default=0.03)
     parser.add_argument("--logging-steps", type=int, default=10)
     parser.add_argument("--save-steps", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--lora-r", type=int, default=32)
-    parser.add_argument("--lora-alpha", type=int, default=64)
+    parser.add_argument("--lora-r", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--use-gradient-checkpointing", action="store_true", default=True)
+    parser.add_argument("--use-gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
@@ -83,7 +69,7 @@ def load_jsonl_messages(train_file: str) -> Dataset:
     return Dataset.from_list(records)
 
 
-def build_text_dataset(raw_dataset: Dataset, tokenizer: AutoTokenizer) -> Dataset:
+def build_text_dataset(raw_dataset: Dataset, tokenizer) -> Dataset:
     """
     使用 tokenizer.apply_chat_template 将 messages 转为可训练文本字段 text。
     这样可以兼容多数 TRL 版本，不依赖额外的数据整理器。
@@ -122,53 +108,42 @@ def maybe_get_latest_checkpoint(output_dir: str) -> Optional[str]:
     return checkpoints[-1][1]
 
 
-def build_bnb_config() -> BitsAndBytesConfig:
-    """构建 4-bit 量化配置，优先使用 NF4，计算精度优先 bf16。"""
-    bf16_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    compute_dtype = torch.bfloat16 if bf16_supported else torch.float16
-
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=compute_dtype,
-    )
-
-
 def main() -> None:
     args = parse_args()
 
+    try:
+        from unsloth import FastLanguageModel  # type: ignore[import-not-found]
+    except (ImportError, TypeError) as exc:
+        import sys
+
+        python_ver = sys.version_info
+        hint = (
+            f"\n当前 Python {python_ver.major}.{python_ver.minor}，"
+            "unsloth 要求 Python >= 3.10。\n"
+            "请用 Python 3.11 重建环境：\n"
+            "  conda create -n prompt-opt python=3.11 -y\n"
+            "  conda activate prompt-opt\n"
+            "  pip install unsloth -i https://pypi.tuna.tsinghua.edu.cn/simple"
+        )
+        raise RuntimeError(f"无法导入 unsloth：{exc}{hint}") from exc
+
     torch.manual_seed(args.seed)
 
-    # 1) tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False, trust_remote_code=True)
+    # 1) 使用 Unsloth 载入 4-bit 模型 + tokenizer
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=args.model_name,
+        max_seq_length=args.max_seq_length,
+        dtype=None,
+        load_in_4bit=True,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 2) 4-bit 量化加载模型
-    bnb_config = build_bnb_config()
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-
-    # 3) 显存优化关键配置
-    if args.use_gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-
-    # 让输入嵌入支持梯度，配合 k-bit 训练
-    model = prepare_model_for_kbit_training(model)
-    model.config.use_cache = False
-
-    # 4) LoRA 配置（重点注入注意力投影层）
-    peft_config = LoraConfig(
+    # 2) LoRA 注入（由 Unsloth 管理 k-bit 训练细节）
+    gradient_checkpointing_mode = "unsloth" if args.use_gradient_checkpointing else False
+    model = FastLanguageModel.get_peft_model(
+        model,
         r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
         target_modules=[
             "q_proj",
             "k_proj",
@@ -178,15 +153,24 @@ def main() -> None:
             "up_proj",
             "down_proj",
         ],
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        bias="none",
+        use_gradient_checkpointing=gradient_checkpointing_mode,
+        random_state=args.seed,
+        max_seq_length=args.max_seq_length,
     )
 
-    # 5) 数据集
+    # 3) 训练稳定性设置
+    model.config.use_cache = False
+
+    # 4) 数据集
     raw_dataset = load_jsonl_messages(args.train_file)
     train_dataset = build_text_dataset(raw_dataset, tokenizer)
 
-    # 6) TrainingArguments（12GB 显存保守配置）
+    # 5) SFTConfig（12G 显存保守配置，兼容 TRL 0.24+）
     bf16_flag = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -205,19 +189,18 @@ def main() -> None:
         report_to="none",
         optim="paged_adamw_8bit",
         gradient_checkpointing=args.use_gradient_checkpointing,
+        dataset_text_field="text",
+        max_length=args.max_seq_length,
+        packing=False,
         dataloader_num_workers=0,
         seed=args.seed,
     )
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         args=training_args,
         train_dataset=train_dataset,
-        peft_config=peft_config,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_length,
-        packing=False,
     )
 
     # 8) 自动断点恢复

@@ -5,19 +5,17 @@
 generate_data.py
 
 用途：
-1) 使用 OpenAI 兼容接口（如 GPT-4o / Qwen-Max）合成多轮对话训练数据。
+1) 使用 DeepSeek V3（OpenAI 兼容接口）合成多轮对话训练数据。
 2) 输出为 Hugging Face chat template 可直接消费的 JSONL（messages 列表）。
 3) 支持断点续传：如果中断，重新运行会自动接着生成，直到达到目标条数。
 
 运行前环境变量：
-- API_KEY: 必填，模型服务的密钥
-- BASE_URL: 选填，OpenAI 兼容网关地址（如阿里云/其他代理）
-- MODEL_NAME: 选填，默认 gpt-4o-mini（可改为 qwen-max 等）
+- API_KEY:    必填，DeepSeek API 密钥
+- BASE_URL:   选填，默认 https://api.deepseek.com/v1
+- MODEL_NAME: 选填，默认 deepseek-chat（即 DeepSeek V3）
 
 示例：
-  set API_KEY=xxxx
-  set BASE_URL=https://api.openai.com/v1
-  set MODEL_NAME=gpt-4o
+  set API_KEY=sk-xxxx
   python generate_data.py --target-size 1000 --output train_data.jsonl
 """
 
@@ -79,17 +77,17 @@ SCENE_SEEDS: List[str] = [
     "抗洪抢险/救灾前线消防员逆行背影特写",
     "节假日高铁站春运温馨护航纪实摄影",
     "公立医院抗击疫情/义诊活动医护人员特写",
-    "社区网格员走访慰问孤寡老人暖心插画"
+    "社区网格员走访慰问孤寡老人暖心插画",
 
-    "省委全会开幕会直播背景板设计"
-    "县级融媒体中心抖音政务短视频封面"
-    "学习贯彻党的二十届三中全会精神宣传海报"
-    "政府工作报告一图读懂长图设计"
-    "防汛抗洪应急报道前线记者连线画面"
-    "共同富裕示范区建设成果展板"
-    "文明城市建设公益广告（社区版本）"
-    "基层党建活动室上墙制度设计图"
-    "营商环境优化专题报道主视觉"
+    "省委全会开幕会直播背景板设计",
+    "县级融媒体中心抖音政务短视频封面",
+    "学习贯彻党的二十届三中全会精神宣传海报",
+    "政府工作报告一图读懂长图设计",
+    "防汛抗洪应急报道前线记者连线画面",
+    "共同富裕示范区建设成果展板",
+    "文明城市建设公益广告（社区版本）",
+    "基层党建活动室上墙制度设计图",
+    "营商环境优化专题报道主视觉",
     "枫桥经验60周年纪念活动海报"
 ]
 
@@ -105,6 +103,14 @@ META_PROMPT = """
 2.  **知语境**：熟悉省、市、县三级融媒体中心的实际工作场景，如微信公众号首图、政务APP开屏、短视频封面、纪录片海报、应急报道配图等。
 3.  **守底线**：严格遵守互联网新闻信息服务管理规定，生成内容必须符合主流媒体价值观导向，确保政治安全、内容安全。
 4.  **能进化**：通过多轮追问，精准捕捉用户需求，最终输出专业、结构化的英文Prompt。
+
+【语言与模板约束】
+1. 除最后一条助手消息中的英文Prompt正文外，其余所有对话内容必须使用简体中文，不要中英混写。
+2. 最后一条助手消息必须严格使用以下统一模板，不能增加任何额外段落：
+    【最终优化提示词】
+    <仅英文Prompt正文，使用英文逗号分隔，不要夹杂中文解释>
+3. 英文Prompt正文中禁止出现整句中文、中文标点、平台口号、解释性括号说明。
+4. system 消息可以简写，但必须保持“媒体提示词优化专家”角色设定。
 
 【对话流程规范】
 请严格按照以下逻辑生成2-3轮往返的多轮对话（总消息数5-7条，最后一条必须是助手）：
@@ -138,7 +144,7 @@ META_PROMPT = """
 必须输出**单个JSON对象**，不要Markdown代码块，不要额外说明。JSON结构如下：
 {
   "messages": [
-    {"role": "system", "content": "你是媒体提示词优化专家..."},  // 可用本提示精简版
+        {"role": "system", "content": "你是媒体提示词优化专家..."},
     {"role": "user", "content": "..."},
     {"role": "assistant", "content": "..."},
     ...
@@ -164,8 +170,86 @@ def build_user_instruction(scene: str) -> str:
     round_hint = random.choice(["2轮往返", "3轮往返"])
     return (
         f"请围绕场景“{scene}”生成一条训练样本；{style_bias}；对话长度偏向{round_hint}。"
-        "请直接输出 JSON 对象。"
+        "请确保追问部分全部为简体中文，最终仅按统一模板输出英文Prompt。请直接输出 JSON 对象。"
     )
+
+
+FINAL_TAG = "【最终优化提示词】"
+
+
+def normalize_text(text: str) -> str:
+    """规范文本空白，减少格式抖动。"""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in text.split("\n")]
+    compact_lines: List[str] = []
+    previous_blank = False
+    for line in lines:
+        if not line:
+            if not previous_blank:
+                compact_lines.append("")
+            previous_blank = True
+            continue
+        compact_lines.append(re.sub(r"\s+", " ", line))
+        previous_blank = False
+    return "\n".join(compact_lines).strip()
+
+
+def extract_final_prompt(text: str) -> str:
+    """提取最终英文 Prompt 正文。"""
+    normalized = normalize_text(text)
+    if FINAL_TAG not in normalized:
+        return ""
+    _, prompt_body = normalized.split(FINAL_TAG, 1)
+    return prompt_body.strip()
+
+
+def ascii_letter_ratio(text: str) -> float:
+    letters = re.findall(r"[A-Za-z]", text)
+    visible_chars = re.findall(r"\S", text)
+    if not visible_chars:
+        return 0.0
+    return len(letters) / len(visible_chars)
+
+
+def cjk_ratio(text: str) -> float:
+    cjk_chars = re.findall(r"[\u4e00-\u9fff]", text)
+    visible_chars = re.findall(r"\S", text)
+    if not visible_chars:
+        return 0.0
+    return len(cjk_chars) / len(visible_chars)
+
+
+def has_abnormal_repetition(text: str) -> bool:
+    return bool(re.search(r"(.)\1{7,}", text))
+
+
+def normalize_final_message(text: str) -> str:
+    """统一最终消息模板。"""
+    prompt_body = extract_final_prompt(text)
+    if not prompt_body:
+        return normalize_text(text)
+    prompt_body = re.sub(r"[。；：“”‘’（）、，]", " ", prompt_body)
+    prompt_body = re.sub(r"\s+", " ", prompt_body).strip(" ,\n")
+    return f"{FINAL_TAG}\n{prompt_body}"
+
+
+def normalize_record(obj: Dict, scene: str) -> Dict:
+    """对模型输出做轻量标准化，方便后续去重与训练。"""
+    messages = obj.get("messages", [])
+    normalized_messages: List[Dict] = []
+    for idx, message in enumerate(messages):
+        role = message.get("role", "")
+        content = normalize_text(str(message.get("content", "")))
+        if idx == len(messages) - 1 and role == "assistant":
+            content = normalize_final_message(content)
+        normalized_messages.append({"role": role, "content": content})
+
+    obj["messages"] = normalized_messages
+    if "meta" not in obj or not isinstance(obj.get("meta"), dict):
+        obj["meta"] = {}
+    obj["meta"]["scene"] = normalize_text(str(obj["meta"].get("scene") or scene))
+    obj["meta"].setdefault("difficulty", random.choice(["easy", "medium", "hard"]))
+    return obj
 
 
 def extract_json_object(text: str) -> Optional[Dict]:
@@ -218,13 +302,43 @@ def validate_sample(obj: Dict) -> bool:
             return False
         if not isinstance(m.get("content"), str) or not m.get("content").strip():
             return False
+        if len(m["content"].strip()) < 4 or len(m["content"].strip()) > 2000:
+            return False
+        if has_abnormal_repetition(m["content"]):
+            return False
 
     # 最后一条必须是 assistant
     if messages[-1].get("role") != "assistant":
         return False
 
     # 最终 assistant 文本必须带标签
-    if "【最终优化提示词】" not in messages[-1].get("content", ""):
+    final_content = normalize_text(messages[-1].get("content", ""))
+    if FINAL_TAG not in final_content:
+        return False
+
+    final_prompt = extract_final_prompt(final_content)
+    if not final_prompt:
+        return False
+
+    # 非最终 Prompt 的对话尽量保持中文，减少中英混拼
+    for i, message in enumerate(messages[:-1]):
+        if message["role"] == "system":
+            continue
+        content = normalize_text(message["content"])
+        if ascii_letter_ratio(content) > 0.35:
+            return False
+        if cjk_ratio(content) < 0.15:
+            return False
+
+    # 最终 Prompt 正文以英文为主，避免夹杂大量中文解释
+    if ascii_letter_ratio(final_prompt) < 0.45:
+        return False
+    if cjk_ratio(final_prompt) > 0.08:
+        return False
+
+    # 样本内部不应出现完全重复消息
+    normalized_contents = [normalize_text(m["content"]) for m in messages]
+    if len(normalized_contents) != len(set(normalized_contents)):
         return False
 
     # 至少要有 2 条 user + 2 条 assistant（含最终）
@@ -257,8 +371,27 @@ def load_existing(output_path: Path) -> List[Dict]:
 
 def append_record(output_path: Path, record: Dict) -> None:
     """追加写入单条 JSONL。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def resolve_output_path(output: str, worker_id: str) -> Path:
+    """根据 worker_id 生成分片文件路径，避免多进程同时写同一个文件。"""
+    raw_path = Path(output)
+    if raw_path.suffix.lower() == ".jsonl":
+        if worker_id:
+            return raw_path.with_name(f"{raw_path.stem}.{worker_id}{raw_path.suffix}")
+        return raw_path
+
+    target_dir = raw_path
+    filename = f"train_data.{worker_id}.jsonl" if worker_id else "train_data.jsonl"
+    return target_dir / filename
+
+
+def is_non_retryable_error(error: Exception) -> bool:
+    text = str(error)
+    return any(code in text for code in ["Error code: 400", "Error code: 401", "Error code: 403", "Error code: 404", "invalid_request_error"])
 
 
 def generate_one_sample(client: OpenAI, model_name: str, scene: str, temperature: float) -> Optional[Dict]:
@@ -279,6 +412,8 @@ def generate_one_sample(client: OpenAI, model_name: str, scene: str, temperature
     if obj is None:
         return None
 
+    obj = normalize_record(obj, scene)
+
     if not validate_sample(obj):
         return None
 
@@ -293,15 +428,16 @@ def generate_one_sample(client: OpenAI, model_name: str, scene: str, temperature
 def main() -> None:
     parser = argparse.ArgumentParser(description="生成多轮对话训练数据（JSONL）")
     parser.add_argument("--target-size", type=int, default=1000, help="目标样本数，默认 1000")
-    parser.add_argument("--output", type=str, default="train_data.jsonl", help="输出 JSONL 文件路径")
-    parser.add_argument("--model", type=str, default=os.getenv("MODEL_NAME", "gpt-4o-mini"), help="API 模型名")
+    parser.add_argument("--output", type=str, default="train_data.jsonl", help="输出 JSONL 文件路径；若传目录则自动写入分片")
+    parser.add_argument("--worker-id", type=str, default="worker0", help="并行生成时的 worker 标识，用于分片输出")
+    parser.add_argument("--model", type=str, default=os.getenv("MODEL_NAME", "deepseek-chat"), help="API 模型名，默认 deepseek-chat")
     parser.add_argument("--temperature", type=float, default=0.9, help="采样温度")
     parser.add_argument("--max-retries", type=int, default=6, help="单条样本最大重试次数")
     parser.add_argument("--sleep", type=float, default=0.8, help="每次成功调用后 sleep 秒数，避免限流")
     args = parser.parse_args()
 
     api_key = os.getenv("API_KEY")
-    base_url = os.getenv("BASE_URL")
+    base_url = os.getenv("BASE_URL", "https://api.deepseek.com/v1")
 
     if not api_key:
         print("[错误] 未检测到环境变量 API_KEY", file=sys.stderr)
@@ -312,12 +448,13 @@ def main() -> None:
         client_kwargs["base_url"] = base_url
 
     client = OpenAI(**client_kwargs)
-    output_path = Path(args.output)
+    output_path = resolve_output_path(args.output, args.worker_id)
 
     existing = load_existing(output_path)
     current_size = len(existing)
     print(f"[信息] 已有样本数: {current_size}")
     print(f"[信息] 目标样本数: {args.target_size}")
+    print(f"[信息] 当前输出文件: {output_path.resolve()}")
 
     if current_size >= args.target_size:
         print("[完成] 已达到目标，无需继续生成。")
@@ -363,6 +500,9 @@ def main() -> None:
                 break
 
             except Exception as e:
+                if is_non_retryable_error(e):
+                    print(f"[错误] 检测到不可重试错误: {e}", file=sys.stderr)
+                    sys.exit(1)
                 wait_s = min(2 ** attempt, 20)
                 print(f"[警告] 第 {attempt} 次尝试失败: {e}; {wait_s}s 后重试")
                 time.sleep(wait_s)
