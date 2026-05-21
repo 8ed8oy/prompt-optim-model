@@ -29,10 +29,15 @@ from transformers import (
     TextIteratorStreamer,
 )
 
+from src.prompt_loader import read_prompt
+
+
+DEFAULT_SYSTEM_PROMPT = read_prompt("inference_system_prompt.txt")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LoRA 推理 + 多轮终端对话")
-    parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-7B-Instruct")
+    parser.add_argument("--base-model", type=str, default="unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit")
     parser.add_argument("--adapter-path", type=str, default="outputs/qwen25_7b_prompt_optimizer")
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
@@ -42,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--system-prompt",
         type=str,
-        default="你是一个资深媒体提示词优化专家。你会通过追问澄清用户意图，并输出专业可执行的文生图/视频 Prompt。",
+        default=DEFAULT_SYSTEM_PROMPT,
     )
     return parser.parse_args()
 
@@ -93,21 +98,37 @@ def stream_generate(
     max_new_tokens: int,
 ) -> str:
     """基于当前 history 生成 assistant 回复，并以流式方式打印。"""
-    inputs = tokenizer.apply_chat_template(
+    chat_inputs = tokenizer.apply_chat_template(
         history,
         tokenize=True,
         add_generation_prompt=True,
         return_tensors="pt",
     )
 
+    # 兼容不同 transformers/tokenizer 版本的返回类型：Tensor / BatchEncoding / dict
+    if isinstance(chat_inputs, torch.Tensor):
+        model_inputs = {"input_ids": chat_inputs}
+    elif hasattr(chat_inputs, "keys") and hasattr(chat_inputs, "__getitem__"):
+        model_inputs = {
+            key: value
+            for key, value in chat_inputs.items()
+            if isinstance(value, torch.Tensor)
+        }
+    else:
+        raise TypeError(
+            f"apply_chat_template 返回了不支持的类型: {type(chat_inputs)}"
+        )
+
+    if "input_ids" not in model_inputs:
+        raise ValueError("apply_chat_template 返回结果中缺少 input_ids")
+
     # 如果模型分布在多卡，取第一个参数所在设备；单卡时即 cuda:0
     model_device = next(model.parameters()).device
-    inputs = inputs.to(model_device)
+    model_inputs = {k: v.to(model_device) for k, v in model_inputs.items()}
 
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
     generation_kwargs = dict(
-        input_ids=inputs,
         max_new_tokens=max_new_tokens,
         do_sample=True,
         temperature=temperature,
@@ -117,6 +138,7 @@ def stream_generate(
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.pad_token_id,
     )
+    generation_kwargs.update(model_inputs)
 
     thread = threading.Thread(target=model.generate, kwargs=generation_kwargs)
     thread.start()

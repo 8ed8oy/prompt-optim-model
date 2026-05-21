@@ -1,0 +1,18 @@
+.claude
+
+# Training data and model outputs
+data/*
+!data/.gitkeep
+train_data.cleaned.jsonl
+train_data.*.jsonl
+outputs/*
+!outputs/.gitkeep
+
+# Python cache and compiled files
+__pycache__/
+unsloth_compiled_cache/
+
+# Temporary and generated files
+*.log
+*.tmp
+*.temp

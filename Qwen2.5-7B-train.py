@@ -19,16 +19,16 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
+#unsloth不提到最前会导致eos_token未定义错误，原因不明
+import unsloth
 import torch
 from datasets import Dataset
 from trl import SFTConfig, SFTTrainer
-import unsloth
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="QLoRA SFT 训练脚本（Qwen2.5-7B 显存优化）")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen2.5-7B-Instruct")
-    parser.add_argument("--train-file", type=str, default="train_data.jsonl")
+    parser.add_argument("--train-file", type=str, default="data/train_data.cleaned.jsonl")
     parser.add_argument("--output-dir", type=str, default="outputs/qwen25_7b_prompt_optimizer")
     parser.add_argument("--max-seq-length", type=int, default=384)
     parser.add_argument("--num-train-epochs", type=float, default=3.0)
@@ -136,6 +136,8 @@ def main() -> None:
         dtype=None,
         load_in_4bit=True,
     )
+    if tokenizer.eos_token is None:
+        raise ValueError("tokenizer 未配置 eos_token，请检查基础模型 tokenizer 配置")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -194,6 +196,8 @@ def main() -> None:
         packing=False,
         dataloader_num_workers=0,
         seed=args.seed,
+        eos_token=tokenizer.eos_token,
+        pad_token=tokenizer.pad_token,
     )
 
     trainer = SFTTrainer(

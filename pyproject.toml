@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prompt-optimizer-model"
+version = "0.1.0"
+description = "面向媒体领域的提示词优化模型，包含数据生成、训练、推理和评估流程"
+requires-python = ">=3.10"
+dependencies = [
+  "datasets",
+  "openai",
+  "peft",
+  "torch",
+  "transformers",
+  "trl",
+  "accelerate",
+  "unsloth",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
