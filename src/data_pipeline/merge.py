@@ -29,7 +29,7 @@ def load_records(path: Path) -> List[Dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="合并并清洗多 worker 生成的训练数据")
     parser.add_argument("--input-dir", type=str, default="data", help="输入分片目录，默认 data")
-    parser.add_argument("--output", type=str, default="train_data.cleaned.jsonl", help="清洗后的输出文件")
+    parser.add_argument("--output", type=str, default="data/train_data.cleaned.jsonl", help="清洗后的输出文件")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)

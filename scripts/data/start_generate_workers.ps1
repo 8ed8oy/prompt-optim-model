@@ -161,4 +161,4 @@ for ($i = 1; $i -le $WorkerCount; $i++) {
 
 Write-Host "[DONE] All workers started."
 Write-Host "[NEXT] After all workers finish, run:"
-Write-Host "       python .\scripts\data\merge_clean_data.py --input-dir .\data --output .\train_data.cleaned.jsonl"
+Write-Host "       python .\scripts\data\merge_clean_data.py --input-dir .\data --output .\data\train_data.cleaned.jsonl"

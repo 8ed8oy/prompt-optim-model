@@ -174,10 +174,10 @@ function Merge-CleanData {
 
     & python .\scripts\data\merge_clean_data.py `
         --input-dir ".\data" `
-        --output ".\train_data.cleaned.jsonl"
+        --output ".\data\train_data.cleaned.jsonl"
 
-    if (Test-Path ".\train_data.cleaned.jsonl") {
-        $fileSize = (Get-Item ".\train_data.cleaned.jsonl").Length / 1MB
+    if (Test-Path ".\data\train_data.cleaned.jsonl") {
+        $fileSize = (Get-Item ".\data\train_data.cleaned.jsonl").Length / 1MB
         Write-Success "Merged file: train_data.cleaned.jsonl ($([math]::Round($fileSize, 2)) MB)"
     }
 }
@@ -185,17 +185,17 @@ function Merge-CleanData {
 function Train-Model {
     Write-Step "Step 5: Train Qwen2.5-7B"
 
-    if (-not (Test-Path ".\train_data.cleaned.jsonl")) {
+    if (-not (Test-Path ".\data\train_data.cleaned.jsonl")) {
         Write-Err "Training data missing: train_data.cleaned.jsonl"
         exit 1
     }
 
-    if ((Get-Item ".\train_data.cleaned.jsonl").Length -lt 1MB) {
+    if ((Get-Item ".\data\train_data.cleaned.jsonl").Length -lt 1MB) {
         Write-Warn "Training data is small (< 1MB). Consider generating more data."
     }
 
     & python .\Qwen2.5-7B-train.py `
-        --train-file ".\train_data.cleaned.jsonl" `
+        --train-file ".\data\train_data.cleaned.jsonl" `
         --output-dir ".\outputs\qwen25_7b_prompt_optimizer" `
         --max-seq-length 384 `
         --per-device-train-batch-size 2 `
