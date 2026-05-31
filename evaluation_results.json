@@ -1,0 +1,81 @@
+[
+  {
+    "test_case_id": 1,
+    "test_case_name": "简单请求 - 党建宣传海报",
+    "response": "好的，请先告诉我这个海报主要用于哪个平台？比如微信头图、公众号文章封面还是抖音竖屏？另外，具体想表现什么主题和场景？比如会议室讨论、田间地头走访，还是其他？",
+    "metrics": {
+      "is_questioning": true,
+      "questioning_score": 1.0,
+      "response_length": 78,
+      "key_terms_found": [
+        "海报",
+        "封面"
+      ],
+      "key_terms_score": 0.2,
+      "has_structure": false,
+      "structure_score": 0.0,
+      "professional_terms": 0,
+      "professional_score": 0.0
+    }
+  },
+  {
+    "test_case_id": 2,
+    "test_case_name": "中等复杂度 - 乡村振兴短视频封面",
+    "response": "好的，我先确认几个关键点：\n\n1. **发布平台与尺寸**：这个封面主要用于哪个平台？比如抖音竖屏（9:16）还是微信头图（1:1）？或者需要同时适配多个比例？\n2. **视觉风格**：您更偏向写实摄影风格，还是插画或手绘风格？有没有参考的电影海报或设计方向？\n3. **核心主体与场景**：具体是什么样的乡村场景？例如农田、茶园、古村落、果园？是否有人物出现？如果有人物，他们是农民劳作、游客体验还是其他？\n4. **情绪基调**：除了希望和活力，是否有更具体的氛围描述？比如温暖亲切、蓬勃向上、宁静美好等？\n5. **构图与镜头语言**：封面通常会采用什么构图方式？比如中心对称、三分法、引导线？是否需要留出文字区域？如果有多个主体，如何布局？另外，如果是长视频开场封面，是否有特定的镜头感（如航拍全景、中景特写）？\n\n请您补充这些信息，我会进一步细化。",
+    "metrics": {
+      "is_questioning": true,
+      "questioning_score": 1.0,
+      "response_length": 379,
+      "key_terms_found": [
+        "海报",
+        "封面",
+        "视觉",
+        "构图",
+        "镜头"
+      ],
+      "key_terms_score": 0.5,
+      "has_structure": true,
+      "structure_score": 1.0,
+      "professional_terms": 3,
+      "professional_score": 0.6
+    }
+  },
+  {
+    "test_case_id": 3,
+    "test_case_name": "已有部分信息 - 城市宣传片",
+    "response": "好的，这个方向很清晰！请问这个宣传片主要发布在哪？比如大屏（如地铁站、社区广场）、手机端（如抖音快手）还是网站端？另外，画面的核心主体是什么？比如地标建筑、人物群像还是自然景观？还有情绪基调是激昂振奋还是温暖亲切？请先告诉我这些基本信息。",
+    "metrics": {
+      "is_questioning": true,
+      "questioning_score": 1.0,
+      "response_length": 119,
+      "key_terms_found": [
+        "宣传"
+      ],
+      "key_terms_score": 0.1,
+      "has_structure": false,
+      "structure_score": 0.0,
+      "professional_terms": 0,
+      "professional_score": 0.0
+    }
+  },
+  {
+    "test_case_id": 4,
+    "test_case_name": "多轮对话测试 - 初始请求",
+    "response": "好的，我先了解一些关键信息：\n\n1. **发布平台与尺寸**：这个海报主要用于哪个平台？比如手机端（如抖音竖屏）、大屏端（如电视横版）还是社交媒体头图？具体比例需要吗？\n2. **视觉风格**：您希望偏向纪实摄影风格、电影感插画，还是带一点水墨意境的国潮风？\n3. **核心场景与主体**：海报里主要展示什么？例如一个具体的地标建筑、人物活动、自然风光，还是抽象的概念？是否需要明确的人物角色（如老人、孩子、游客）？\n4. **情绪基调**：想要传递温暖怀旧、宁静悠远，还是活力动感？\n5. **构图偏好**：是否有特定的对称、留白或其他构图要求？\n\n请先告诉我这些基础信息。",
+    "metrics": {
+      "is_questioning": true,
+      "questioning_score": 1.0,
+      "response_length": 288,
+      "key_terms_found": [
+        "海报",
+        "视觉",
+        "构图"
+      ],
+      "key_terms_score": 0.3,
+      "has_structure": true,
+      "structure_score": 1.0,
+      "professional_terms": 3,
+      "professional_score": 0.6
+    }
+  }
+]

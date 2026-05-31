@@ -1,0 +1,12 @@
+datasets
+openai
+peft
+torch
+transformers
+trl
+accelerate
+unsloth
+
+[dev]
+pytest
+ruff

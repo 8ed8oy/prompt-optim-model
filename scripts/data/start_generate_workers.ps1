@@ -6,7 +6,7 @@ param(
     [int]$MaxRetries = 6,
     [double]$SleepSeconds = 0.8,
     [string]$PythonExe = "D:/CondaData/envs/prompt-opt/python.exe",
-    [string]$ModelName = $(if ($env:MODEL_NAME) { $env:MODEL_NAME } else { "deepseek-chat" }),
+    [string]$ModelName = $(if ($env:MODEL_NAME) { $env:MODEL_NAME } else { "deepseek-v4-flash" }),
     [string]$BaseUrl = $(if ($env:BASE_URL) { $env:BASE_URL } else { "https://api.deepseek.com/v1" }),
     [string]$ApiKeys = $env:API_KEYS
 )

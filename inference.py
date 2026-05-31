@@ -18,6 +18,8 @@ inference.py
 
 import argparse
 import threading
+from os import environ
+from pathlib import Path
 from typing import Dict, List
 
 import torch
@@ -29,10 +31,40 @@ from transformers import (
     TextIteratorStreamer,
 )
 
+from src.data_pipeline.core import extract_final_payload
 from src.prompt_loader import read_prompt
 
 
 DEFAULT_SYSTEM_PROMPT = read_prompt("inference_system_prompt.txt")
+CLARIFY_REMINDER = (
+    "如果信息仍然不足，请只追问用户需要补充的关键信息；"
+    "如果信息已经足够，请直接输出最终 JSON，不要输出解释性文字。"
+)
+QUESTION_HINTS = ("?", "？", "请补充", "需要", "是否", "哪些", "什么", "如何", "几", "还是")
+
+
+def resolve_local_model_source(model_name: str) -> str:
+    if Path(model_name).exists():
+        return model_name
+
+    cache_root = Path(environ.get("HF_HUB_CACHE") or (Path.home() / ".cache" / "huggingface" / "hub"))
+    candidate_repos = [model_name]
+    if model_name == "Qwen/Qwen2.5-7B-Instruct":
+        candidate_repos = [
+            "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit",
+            model_name,
+        ]
+
+    for repo in candidate_repos:
+        repo_dir = cache_root / f"models--{repo.replace('/', '--')}" / "snapshots"
+        if not repo_dir.exists():
+            continue
+        snapshots = [p for p in repo_dir.iterdir() if p.is_dir()]
+        if snapshots:
+            snapshots.sort(key=lambda p: p.name)
+            return str(snapshots[-1])
+
+    return model_name
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +74,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
     parser.add_argument("--max-new-tokens", type=int, default=384)
+    parser.add_argument(
+        "--input-file",
+        type=str,
+        default=None,
+        help="可选：按行读取测试输入，便于非交互式批量推理",
+    )
+    parser.add_argument(
+        "--clarify-retries",
+        type=int,
+        default=2,
+        help="当模型未输出明确追问或最终 JSON 时，自动补充约束并重试的次数",
+    )
     parser.add_argument("--merge-lora", action="store_true", default=True, help="是否尝试合并 LoRA 权重（默认开启）")
     parser.add_argument("--no-merge-lora", action="store_false", dest="merge_lora", help="关闭 LoRA 合并，直接以 Adapter 方式推理")
     parser.add_argument(
@@ -64,6 +108,8 @@ def build_bnb_config() -> BitsAndBytesConfig:
 
 
 def load_model_and_tokenizer(base_model: str, adapter_path: str, merge_lora: bool):
+    base_model = resolve_local_model_source(base_model)
+    print(f"[信息] 基座模型: {base_model}")
     tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -154,6 +200,54 @@ def stream_generate(
     return "".join(chunks).strip()
 
 
+def is_final_json(text: str) -> bool:
+    return extract_final_payload(text) is not None
+
+
+def looks_like_clarifying_question(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return any(hint in normalized for hint in QUESTION_HINTS)
+
+
+def generate_task_turn(
+    model,
+    tokenizer,
+    history: List[Dict[str, str]],
+    temperature: float,
+    top_p: float,
+    max_new_tokens: int,
+    clarify_retries: int,
+) -> str:
+    generation_history = history
+    assistant_text = ""
+
+    for attempt in range(clarify_retries + 1):
+        assistant_text = stream_generate(
+            model=model,
+            tokenizer=tokenizer,
+            history=generation_history,
+            temperature=temperature,
+            top_p=top_p,
+            max_new_tokens=max_new_tokens,
+        )
+
+        if is_final_json(assistant_text):
+            print("[信息] 模型已输出最终 JSON。")
+            break
+
+        if looks_like_clarifying_question(assistant_text):
+            print("[信息] 模型处于追问阶段，等待用户补充信息。")
+            break
+
+        if attempt < clarify_retries:
+            print("[警告] 本轮回复未形成明确追问或最终 JSON，正在补充约束后重试。")
+            generation_history = generation_history + [{"role": "system", "content": CLARIFY_REMINDER}]
+
+    return assistant_text
+
+
 def main() -> None:
     args = parse_args()
     model, tokenizer = load_model_and_tokenizer(args.base_model, args.adapter_path, args.merge_lora)
@@ -162,10 +256,27 @@ def main() -> None:
 
     print("=" * 72)
     print("多轮对话测试已启动。输入 quit/exit 退出，输入 clear 清空历史。")
+    print("当前启用自动追问收敛：信息不足时会尝试补充约束并重试，直到模型给出明确追问或最终 JSON。")
     print("=" * 72)
 
+    input_lines = None
+    if args.input_file:
+        input_path = Path(args.input_file)
+        if input_path.exists():
+            input_lines = [line.strip() for line in input_path.read_text(encoding="utf-8").splitlines()]
+        else:
+            print(f"[警告] 输入文件不存在：{input_path}，将进入交互模式。")
+
+    line_iter = iter(input_lines) if input_lines is not None else None
+
     while True:
-        user_text = input("用户: ").strip()
+        if line_iter is None:
+            user_text = input("用户: ").strip()
+        else:
+            try:
+                user_text = next(line_iter)
+            except StopIteration:
+                break
 
         if not user_text:
             continue
@@ -179,13 +290,14 @@ def main() -> None:
 
         history.append({"role": "user", "content": user_text})
 
-        assistant_text = stream_generate(
+        assistant_text = generate_task_turn(
             model=model,
             tokenizer=tokenizer,
             history=history,
             temperature=args.temperature,
             top_p=args.top_p,
             max_new_tokens=args.max_new_tokens,
+            clarify_retries=args.clarify_retries,
         )
 
         history.append({"role": "assistant", "content": assistant_text})

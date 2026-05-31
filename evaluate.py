@@ -9,6 +9,8 @@ python evaluate.py --adapter-path outputs/qwen25_7b_prompt_optimizer
 
 import argparse
 import json
+from os import environ
+from pathlib import Path
 from typing import List, Dict
 import torch
 from transformers import (
@@ -25,6 +27,30 @@ SYSTEM_PROMPT = read_prompt("evaluation_system_prompt.txt")
 FOLLOWUP_ASSISTANT_PROMPT = read_prompt("evaluation_followup_assistant.txt")
 
 
+def resolve_local_model_source(model_name: str) -> str:
+    if Path(model_name).exists():
+        return model_name
+
+    cache_root = Path(environ.get("HF_HUB_CACHE") or (Path.home() / ".cache" / "huggingface" / "hub"))
+    candidate_repos = [model_name]
+    if model_name == "Qwen/Qwen2.5-7B-Instruct":
+        candidate_repos = [
+            "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit",
+            model_name,
+        ]
+
+    for repo in candidate_repos:
+        repo_dir = cache_root / f"models--{repo.replace('/', '--')}" / "snapshots"
+        if not repo_dir.exists():
+            continue
+        snapshots = [p for p in repo_dir.iterdir() if p.is_dir()]
+        if snapshots:
+            snapshots.sort(key=lambda p: p.name)
+            return str(snapshots[-1])
+
+    return model_name
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="评估训练好的提示词优化模型")
     parser.add_argument("--base-model", type=str, default="Qwen/Qwen2.5-7B-Instruct")
@@ -37,6 +63,8 @@ def parse_args():
 
 def load_model(base_model: str, adapter_path: str):
     """加载4-bit模型和LoRA适配器"""
+    base_model = resolve_local_model_source(base_model)
+    print(f"[信息] 基座模型: {base_model}")
     bf16_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     compute_dtype = torch.bfloat16 if bf16_supported else torch.float16
 
@@ -67,12 +95,21 @@ def load_model(base_model: str, adapter_path: str):
 def generate_response(model, tokenizer, messages: List[Dict[str, str]],
                      max_new_tokens: int, temperature: float, top_p: float) -> str:
     """生成回复"""
-    inputs = tokenizer.apply_chat_template(
+    chat_inputs = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_tensors="pt",
     )
+
+    if isinstance(chat_inputs, torch.Tensor):
+        inputs = chat_inputs
+    elif hasattr(chat_inputs, "keys") and hasattr(chat_inputs, "__getitem__"):
+        if "input_ids" not in chat_inputs:
+            raise ValueError("apply_chat_template 返回结果中缺少 input_ids")
+        inputs = chat_inputs["input_ids"]
+    else:
+        raise TypeError(f"apply_chat_template 返回了不支持的类型: {type(chat_inputs)}")
 
     model_device = next(model.parameters()).device
     inputs = inputs.to(model_device)

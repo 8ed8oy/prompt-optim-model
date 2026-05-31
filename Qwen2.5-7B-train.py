@@ -16,6 +16,7 @@ train.py
 import argparse
 import json
 import re
+from os import environ
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -108,6 +109,39 @@ def maybe_get_latest_checkpoint(output_dir: str) -> Optional[str]:
     return checkpoints[-1][1]
 
 
+def resolve_local_model_source(model_name: str) -> str:
+    """
+    优先返回本地 Hugging Face cache 中的模型快照路径。
+
+    这样在 HF_HUB_OFFLINE/无网络环境里，Unsloth 仍然可以从本地缓存加载模型，
+    避免去访问 huggingface.co 做 repo_info 检查。
+    """
+
+    if Path(model_name).exists():
+        return model_name
+
+    cache_root = Path(environ.get("HF_HUB_CACHE") or (Path.home() / ".cache" / "huggingface" / "hub"))
+
+    candidate_repos = [model_name]
+    if model_name == "Qwen/Qwen2.5-7B-Instruct":
+        candidate_repos = [
+            "unsloth/qwen2.5-7b-instruct-unsloth-bnb-4bit",
+            model_name,
+        ]
+
+    for repo in candidate_repos:
+        repo_dir = cache_root / f"models--{repo.replace('/', '--')}" / "snapshots"
+        if not repo_dir.exists():
+            continue
+
+        snapshots = [p for p in repo_dir.iterdir() if p.is_dir()]
+        if snapshots:
+            snapshots.sort(key=lambda p: p.name)
+            return str(snapshots[-1])
+
+    return model_name
+
+
 def main() -> None:
     args = parse_args()
 
@@ -129,9 +163,15 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
 
+    model_source = resolve_local_model_source(args.model_name)
+    if model_source != args.model_name:
+        print(f"[信息] 使用本地模型快照: {model_source}")
+    else:
+        print(f"[信息] 使用模型标识: {model_source}")
+
     # 1) 使用 Unsloth 载入 4-bit 模型 + tokenizer
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.model_name,
+        model_name=model_source,
         max_seq_length=args.max_seq_length,
         dtype=None,
         load_in_4bit=True,
