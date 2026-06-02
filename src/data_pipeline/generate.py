@@ -100,15 +100,16 @@ def build_user_instruction(scene: str) -> str:
             "非长故事可只输出 prompt，但长故事必须输出 scenes",
         ]
     )
-    return (
-        f"请模拟一位{user_profile}围绕文旅宣传场景“{scene}”生成一条训练样本；"
-        f"{style_bias}；{delivery_hint}；对话长度偏向{round_hint}。"
-        f"{story_hint}。"
-        "请确保每轮追问都围绕缺失信息推进，至少覆盖发布平台/尺寸、视觉风格、核心元素、情绪基调、镜头语言或构图中的3个维度。"
-        "如果信息仍不够，继续追问，不要过早输出最终 JSON。"
-        "最后一条 assistant 消息必须是纯 JSON 对象字符串，且 prompt 字段必须是英文、标签化、逗号分隔的结构化写法。"
-        "请直接输出 JSON 对象。"
+    result = (
+        '请模拟一位' + user_profile + '围绕文旅宣传场景”' + scene + '”生成一条训练样本；'
+        + style_bias + '；' + delivery_hint + '；对话长度偏向' + round_hint + '。'
+        + story_hint + '。'
+        + '请确保每轮追问都围绕缺失信息推进，至少覆盖发布平台/尺寸、视觉风格、核心元素、情绪基调、镜头语言或构图中的3个维度。'
+        + '如果信息仍不够，继续追问，不要过早输出最终 JSON。'
+        + '最后一条 assistant 消息必须是紧凑的纯 JSON 对象字符串（必须是一行，禁止换行缩进），且 prompt 字段必须是英文、标签化、逗号分隔的结构化写法，长度>=400字符，必须包含主体、场景、风格、镜头、光线、色彩、构图、情绪等维度的标签。'
+        + '请直接输出 JSON 对象。'
     )
+    return result
 
 
 def generate_one_sample(client: OpenAI, model_name: str, scene: str, temperature: float) -> Optional[Dict]:
@@ -219,8 +220,8 @@ def main() -> None:
                 if is_non_retryable_error(error):
                     print(f"[错误] 检测到不可重试错误: {error}", file=sys.stderr)
                     sys.exit(1)
-                wait_seconds = min(2 ** attempt, 20)
-                print(f"[警告] 第 {attempt} 次尝试失败: {error}; {wait_seconds}s 后重试")
+                wait_seconds = 2
+                print(f"[警告] 第 {attempt} 次尝试失败: {str(error)[:100]}; {wait_seconds}s 后重试")
                 time.sleep(wait_seconds)
 
         if not success:
