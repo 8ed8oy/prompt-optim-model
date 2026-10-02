@@ -1,12 +1,14 @@
 # 提示词优化模型
 
-媒体提示词优化助手 — 基于 Qwen2.5-7B + LoRA 微调，将模糊的文生图/视频需求打磨为专业英文标签化提示词。
+媒体提示词优化助手 — 基于 Qwen2.5-7B-Instruct + QLoRA（4-bit）微调，将模糊的文生图/视频需求打磨为专业英文标签化提示词。
+
+> 训练数据为 **DeepSeek API 合成的多轮对话数据**（V2：400 条，**非人工标注**）；模型效果**尚未经过充分评测**，不要把训练 loss 下降当作生成质量提升。详见 [docs/training_evaluation_report.md](docs/training_evaluation_report.md)。
 
 ## 快速开始
 
 ```powershell
 conda activate prompt-opt
-cd E:\01_workspace\prompt_optimizer_model
+# 在本仓库根目录执行（不要再写死盘符路径）
 ```
 
 ### 推理（对话）
@@ -39,8 +41,15 @@ prompt_optimizer_model/
 ├── README.md
 ├── pyproject.toml
 ├── inference.py                  # 推理入口（wrapper → scripts/inference.py）
-├── data/                         # 训练数据
+├── evaluate.py                   # 评测入口（wrapper → scripts/evaluate.py）
+├── evaluation_results.json       # 4 条用例的规则打分结果（未记录所用 adapter）
+├── data/                         # 训练数据（V2，400 条）
 │   └── train_data.cleaned.jsonl
+├── data.old/                     # 旧版训练数据（V1，800 条，不推荐使用）
+│   └── train_data.cleaned.jsonl
+├── docs/                         # 交接文档与评估报告
+│   ├── PROJECT.md
+│   └── training_evaluation_report.md
 ├── outputs/                      # 模型权重
 │   └── qwen25_7b_prompt_optimizer_v2/
 ├── prompt/                       # 提示词模板
@@ -53,6 +62,7 @@ prompt_optimizer_model/
 │   ├── train.py                  # Unsloth QLoRA 训练
 │   ├── web_demo.py               # Gradio 网页演示
 │   ├── quick_test.py             # 模型文件完整性检查
+│   ├── evaluate.py               # 规则打分评测（根目录 evaluate.py 是 wrapper）
 │   ├── run_data_generation.py    # 数据生成便捷入口
 │   └── data/
 │       ├── generate_data.py      # 生成训练数据
@@ -88,6 +98,10 @@ pip install -U datasets trl accelerate openai unsloth gradio -i https://pypi.tun
 ---
 
 ## 2) 数据生成
+
+> 数据来源：调用 **DeepSeek API（`deepseek-chat`）合成**多轮对话，**不是人工标注**。
+> 现存数据规模：`data/train_data.cleaned.jsonl` = V2，**400 条**；`data.old/train_data.cleaned.jsonl` = V1，**800 条**。下面的 `-WorkerCount 4 -TargetSizePerWorker 300` 只是并行生成的示例命令（合计 1200 条），**并不是现存数据集的生成记录**——现存 V2 数据是 400 条（`data/train_data.worker0.jsonl` 与它字节完全相同）。
+> ⚠️ 仓库当前把 `.env` 纳入了版本控制，其中含真实 API Key；请勿再提交，并尽快轮换该 Key（`.env` 应加入 `.gitignore`）。
 
 配置 API 密钥（`.env` 文件或环境变量）：
 
@@ -126,12 +140,15 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"
 python scripts/train.py `
   --train-file data/train_data.cleaned.jsonl `
   --output-dir outputs/qwen25_7b_prompt_optimizer_v2 `
-  --num-train-epochs 3 `
+  --num-train-epochs 5 `
   --learning-rate 1e-4
 
 # 显存不足时降低序列长度
 python scripts/train.py --max-seq-length 256
 ```
+
+> 上面这组参数对应现存 V2 产物（`outputs/qwen25_7b_prompt_optimizer_v2/checkpoint-60/trainer_state.json`：5 epoch / 60 step / lr 峰值 1e-4）。
+> ⚠️ `scripts/train.py` 自身的默认值是 `--num-train-epochs 3 --learning-rate 2e-4`，**与 V2 实际训练不一致**；直接用默认值跑复现不出 V2。
 
 ---
 
@@ -178,12 +195,15 @@ python scripts/web_demo.py --low-vram --port 7860
 | v2（当前） | `outputs/qwen25_7b_prompt_optimizer_v2` | `--adapter-path outputs/qwen25_7b_prompt_optimizer_v2` |
 | v1（旧版，不推荐） | `outputs/qwen25_7b_prompt_optimizer` | `--adapter-path outputs/qwen25_7b_prompt_optimizer` |
 
+> 两版口径不要混用：**V1** = 800 条数据（`data.old/`）/ 3 epoch / 300 step（另有 2026-03-19 那次 198 步、3 epoch 的训练）；**V2** = 400 条数据（`data/`）/ 5 epoch / 60 step。
+> 根目录 `evaluation_results.json` 只是 4 条用例的规则打分，且 `scripts/evaluate.py` 默认指向 **V1**、结果文件未记录所用 adapter 与日期，**不能当作 V2 的效果证据**。详见 [docs/training_evaluation_report.md](docs/training_evaluation_report.md)。
+
 ---
 
 ## 7) 显存参考
 
 | 显卡 | 推荐配置 |
 |------|---------|
-| 8GB（RTX 4060 Laptop 等） | `--low-vram`（Adapter 模式） |
-| 12GB（RTX 3060 等） | 默认配置（约 8-9GB） |
+| 8GB（RTX 4060 Laptop 等） | `--low-vram`（Adapter 模式，默认显存上限 7500MiB） |
+| 12GB（RTX 3060 等） | 默认配置（训练实测：RTX 3060 12GB / 35 分钟） |
 | 16GB+ | 默认或 `--merge-lora` |

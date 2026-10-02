@@ -1,5 +1,9 @@
 .claude
 
+# Secrets (never commit API keys / credentials)
+.env
+.env.*
+
 # Training data and model outputs
 data/*
 !data/.gitkeep
