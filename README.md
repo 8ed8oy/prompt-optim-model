@@ -1,272 +1,209 @@
-# 面向媒体领域的提示词优化模型
+# 提示词优化模型
 
-1. `src/` 放可复用的业务逻辑
-2. `scripts/` 放批处理和辅助脚本
-3. 根目录保留少量直接运行的入口脚本
-4. `prompt/` 放可单独修改的提示词文本
+媒体提示词优化助手 — 基于 Qwen2.5-7B-Instruct + QLoRA（4-bit）微调，将模糊的文生图/视频需求打磨为专业英文标签化提示词。
 
-推荐流程：
+> 训练数据为 **DeepSeek API 合成的多轮对话数据**（V2：400 条，**非人工标注**）；模型效果**尚未经过充分评测**，不要把训练 loss 下降当作生成质量提升。详见 [docs/training_evaluation_report.md](docs/training_evaluation_report.md)。
 
-1. 用 `scripts/data/generate_data.py` 生成多轮对话训练样本
-2. 用 `scripts/data/merge_clean_data.py` 合并并清洗多 worker 分片
-3. 用 `Qwen2.5-7B-train.py` 做 Unsloth QLoRA 微调
-4. 用 `inference.py` 做多轮对话推理
-
----
-
-## ⚡ 快速开始（推荐）
-
-### 全流程由两个脚本组成
-
-数据生成和模型训练建议分开执行：
-
-#### 1. 数据生成脚本
-
-优先使用多 worker 并行生成：
+## 快速开始
 
 ```powershell
 conda activate prompt-opt
-.\scripts\data\start_generate_workers.ps1 -WorkerCount 4 -TargetSizePerWorker 300 -OutputDir .\data
+# 在本仓库根目录执行（不要再写死盘符路径）
 ```
 
-如果只想单进程生成，也可以直接运行：
+### 推理（对话）
 
 ```powershell
-python .\scripts\data\generate_data.py --target-size 1000 --output .\train_data.jsonl --temperature 0.9
+# 8GB 笔记本显卡（推荐）
+python scripts/inference.py --low-vram
+
+# 12GB+ 显卡
+python scripts/inference.py
+
+# 或使用根目录快捷方式
+python inference.py --low-vram
 ```
 
-生成完成后，再合并清洗：
+### 网页演示
 
 ```powershell
-python .\scripts\data\merge_clean_data.py --input-dir .\data --output .\train_data.cleaned.jsonl
-```
-
-#### 2. 训练脚本
-
-```powershell
-conda activate prompt-opt
-.\train_pipeline.ps1
-```
-
-如果你只想跑训练，也可以直接调用训练入口：
-
-```powershell
-python .\Qwen2.5-7B-train.py `
-  --train-file .\train_data.cleaned.jsonl `
-  --output-dir .\outputs\qwen25_7b_prompt_optimizer
-```
-
-训练数据位置就是这里指定的 `--train-file`。默认值写在 [Qwen2.5-7B-train.py](Qwen2.5-7B-train.py#L25) 里，当前默认是 `train_data.cleaned.jsonl`；如果你想用别的数据，只要把这个参数改成你的路径即可。
-
-`train_pipeline.ps1` 仍然可以作为一键流程使用，但是仍然建议将数据生成和训练分开。它会自动走完：
-- ✅ 环境检查
-- ✅ API 密钥配置（自动提示输入）
-- ✅ 多 worker 并行数据生成
-- ✅ 数据合并清理
-- ✅ Qwen2.5-7B 模型训练
-- ✅ 推理测试（可选）
-
-**也支持直接指定参数**（跳过交互）：
-```powershell
-.\train_pipeline.ps1 -ApiKey "sk-xxxx" -WorkerCount 4 -TargetSizePerWorker 300
-```
-
-**或跳过数据生成，直接用已有数据训练**：
-```powershell
-.\train_pipeline.ps1 -SkipDataGen
+pip install gradio
+python scripts/web_demo.py --low-vram
+# 浏览器打开 http://127.0.0.1:7860
 ```
 
 ---
 
-## 1) 环境配置（推荐先做）
+## 目录结构
 
-这个项目可以借助 `pyproject.toml` 做“半一键”安装：先准备 Python 和 PyTorch，再用 `pip install -e .[dev]` 安装项目本身和开发工具。
+```text
+prompt_optimizer_model/
+├── README.md
+├── pyproject.toml
+├── inference.py                  # 推理入口（wrapper → scripts/inference.py）
+├── evaluate.py                   # 评测入口（wrapper → scripts/evaluate.py）
+├── evaluation_results.json       # 4 条用例的规则打分结果（未记录所用 adapter）
+├── data/                         # 训练数据（V2，400 条）
+│   └── train_data.cleaned.jsonl
+├── data.old/                     # 旧版训练数据（V1，800 条，不推荐使用）
+│   └── train_data.cleaned.jsonl
+├── docs/                         # 交接文档与评估报告
+│   ├── PROJECT.md
+│   └── training_evaluation_report.md
+├── outputs/                      # 模型权重
+│   └── qwen25_7b_prompt_optimizer_v2/
+├── prompt/                       # 提示词模板
+│   ├── inference_system_prompt.txt
+│   ├── data_generation_system_prompt.txt
+│   ├── evaluation_system_prompt.txt
+│   └── evaluation_followup_assistant.txt
+├── scripts/                      # 所有脚本
+│   ├── inference.py              # 推理脚本（低显存优化）
+│   ├── train.py                  # Unsloth QLoRA 训练
+│   ├── web_demo.py               # Gradio 网页演示
+│   ├── quick_test.py             # 模型文件完整性检查
+│   ├── evaluate.py               # 规则打分评测（根目录 evaluate.py 是 wrapper）
+│   ├── run_data_generation.py    # 数据生成便捷入口
+│   └── data/
+│       ├── generate_data.py      # 生成训练数据
+│       ├── merge_clean_data.py   # 合并清洗数据
+│       └── start_generate_workers.ps1  # 并行生成
+└── src/                          # 业务逻辑
+    ├── prompt_loader.py
+    └── data_pipeline/
+        ├── __init__.py
+        ├── core.py
+        ├── generate.py
+        └── merge.py
+```
+
+---
+
+## 1) 环境配置
 
 ```powershell
 # 创建环境（推荐 Python 3.11）
 conda create -n prompt-opt python=3.11 -y
 conda activate prompt-opt
 
-# 先安装与 CUDA 匹配的 PyTorch
-python -m pip install -U pip setuptools wheel
+# 安装 PyTorch（CUDA 12.6）
 pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
-# 再安装项目依赖和开发工具
-pip install -e .[dev]
+# 安装项目依赖
+pip install -U datasets trl accelerate openai unsloth gradio
+# 或清华镜像
+pip install -U datasets trl accelerate openai unsloth gradio -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
-
-> 如果你的机器已经有可用的 PyTorch/CUDA 环境，也可以直接执行 `pip install -e .[dev]`。
->
-> `unsloth` 对 Python 版本比较敏感，推荐使用 Python 3.11。
-
-## 2) 目录结构
-
-```text
-prompt_optimizer_model/
-├── README.md
-├── pyproject.toml
-├── train_pipeline.ps1
-├── Qwen2.5-7B-train.py
-├── inference.py
-├── evaluate.py
-├── quick_test.py
-├── data/
-├── outputs/
-├── prompt/
-├── scripts/
-│   └── data/
-│       ├── generate_data.py
-│       ├── merge_clean_data.py
-│       └── start_generate_workers.ps1
-└── src/
-  └── data_pipeline/
-    ├── __init__.py
-    ├── core.py
-    ├── generate.py
-    └── merge.py
-```
-
-## 3) API 在哪里 / 入口脚本在哪
-
-- DeepSeek API 调用在 `src/data_pipeline/generate.py`
-- 数据处理核心逻辑在 `src/data_pipeline/core.py`
-- 薄入口脚本在 `scripts/data/generate_data.py` 和 `scripts/data/merge_clean_data.py`
-- 训练入口在 `Qwen2.5-7B-train.py`
-- 推理入口在 `inference.py`
-- 评估入口在 `evaluate.py`
-- 一键流程在 `train_pipeline.ps1`
-
-## 4) 环境准备
-
-```powershell
-Set-Location E:\01_workspace\prompt_optimizer_model
-conda activate prompt-opt
-```
-
-如果你想先手动安装而不是走 `pip install -e .[dev]`，也可以用下面这组命令：
-
-```powershell
-python -m pip install -U pip setuptools wheel
-pip install -U torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-pip install -U datasets trl accelerate openai unsloth -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-> **注意**：`unsloth` 依赖 Python **3.10+**，在 Python 3.9 及以下会抛出 `TypeError: unsupported operand type(s) for |`，请确保 conda 环境使用 Python 3.11。
 
 ---
 
-## 5) 脚本选择指南
+## 2) 数据生成
 
-### 数据生成脚本
+> 数据来源：调用 **DeepSeek API（`deepseek-chat`）合成**多轮对话，**不是人工标注**。
+> 现存数据规模：`data/train_data.cleaned.jsonl` = V2，**400 条**；`data.old/train_data.cleaned.jsonl` = V1，**800 条**。下面的 `-WorkerCount 4 -TargetSizePerWorker 300` 只是并行生成的示例命令（合计 1200 条），**并不是现存数据集的生成记录**——现存 V2 数据是 400 条（`data/train_data.worker0.jsonl` 与它字节完全相同）。
+> ⚠️ 仓库当前把 `.env` 纳入了版本控制，其中含真实 API Key；请勿再提交，并尽快轮换该 Key（`.env` 应加入 `.gitignore`）。
 
-| 脚本 | 用途 | 何时使用 |
-|-----|------|---------|
-| **scripts/data/start_generate_workers.ps1** | 多 worker 并行生成数据 | 已有 API key，想批量生成训练样本 |
-| **scripts/data/generate_data.py** | 单进程生成数据 | 调试生成逻辑或小规模试跑 |
-
-### 训练脚本
-
-| 脚本 | 用途 | 何时使用 |
-|-----|------|---------|
-| **Qwen2.5-7B-train.py** | 仅模型训练 | 数据已准备好，只想调整训练参数 |
-| **train_pipeline.ps1** | 完整一键流程 | 想把生成、合并、训练和推理串起来 |
-| **inference.py** | 推理测试 | 模型训练完成后，进行多轮对话测试 |
-
----
-
-## 6) 数据生成配置 API（DeepSeek）
-
-`scripts/data/generate_data.py` 默认就是 DeepSeek：
-
-- `MODEL_NAME=deepseek-chat`
-- `BASE_URL=https://api.deepseek.com/v1`
+配置 API 密钥（`.env` 文件或环境变量）：
 
 ```powershell
-$env:API_KEY = "你的DeepSeek密钥"
+$env:API_KEY = "sk-xxxxxxxx"
 $env:BASE_URL = "https://api.deepseek.com/v1"
 $env:MODEL_NAME = "deepseek-chat"
 ```
 
----
-
-## 7) 生成数据
-
-### 单进程
+### 单进程生成
 
 ```powershell
-python .\scripts\data\generate_data.py --target-size 1000 --output .\train_data.jsonl --temperature 0.9
+python scripts/run_data_generation.py --target-size 200 --output data --sleep 0.8
 ```
 
-### 多进程并行
+### 多 Worker 并行
 
 ```powershell
 .\scripts\data\start_generate_workers.ps1 -WorkerCount 4 -TargetSizePerWorker 300 -OutputDir .\data
 ```
 
-生成完成后合并清洗：
+### 合并清洗
 
 ```powershell
-python .\scripts\data\merge_clean_data.py --input-dir .\data --output .\train_data.cleaned.jsonl
+python scripts/data/merge_clean_data.py --input-dir data --output data/train_data.cleaned.jsonl
 ```
 
 ---
 
-## 8) 训练 Qwen2.5-7B（Unsloth QLoRA）
+## 3) 训练
 
 ```powershell
-# 使用清华镜像
+# 使用清华镜像（国内网络）
 $env:HF_ENDPOINT = "https://hf-mirror.com"
 
-python .\Qwen2.5-7B-train.py `
-  --model-name Qwen/Qwen2.5-7B-Instruct `
-  --train-file .\train_data.cleaned.jsonl `
-  --output-dir .\outputs\qwen25_7b_prompt_optimizer `
-  --max-seq-length 384 `
-  --per-device-train-batch-size 1 `
-  --gradient-accumulation-steps 8 `
-  --save-steps 100 `
-  --num-train-epochs 3
+python scripts/train.py `
+  --train-file data/train_data.cleaned.jsonl `
+  --output-dir outputs/qwen25_7b_prompt_optimizer_v2 `
+  --num-train-epochs 5 `
+  --learning-rate 1e-4
+
+# 显存不足时降低序列长度
+python scripts/train.py --max-seq-length 256
 ```
 
-脚本默认启用 Unsloth 的梯度检查点优化；如需关闭：
-
-```powershell
-python .\Qwen2.5-7B-train.py --no-use-gradient-checkpointing
-```
-
-显存不足时优先降低：
-
-1. `--max-seq-length`（512 -> 384 -> 256）
-2. `--gradient-accumulation-steps`（16 -> 8）
+> 上面这组参数对应现存 V2 产物（`outputs/qwen25_7b_prompt_optimizer_v2/checkpoint-60/trainer_state.json`：5 epoch / 60 step / lr 峰值 1e-4）。
+> ⚠️ `scripts/train.py` 自身的默认值是 `--num-train-epochs 3 --learning-rate 2e-4`，**与 V2 实际训练不一致**；直接用默认值跑复现不出 V2。
 
 ---
 
-## 9) 推理测试
+## 4) 推理
 
 ```powershell
-python .\inference.py `
-  --base-model Qwen/Qwen2.5-7B-Instruct `
-  --adapter-path .\outputs\qwen25_7b_prompt_optimizer `
-  --max-new-tokens 384
+# 8GB 笔记本显卡
+python scripts/inference.py --low-vram
+
+# 12GB+ 显卡  
+python scripts/inference.py
+
+# 自定义显存限制
+python scripts/inference.py --max-gpu-memory "6000MiB"
+
+# 批量推理
+python scripts/inference.py --input-file test_queries.txt
 ```
 
-可用命令：
-
-- `clear` 清空历史
-- `quit` / `exit` 退出
+交互命令：
+- `clear` — 清空对话历史
+- `quit` / `exit` — 退出
 
 ---
 
-## 10) 关键默认值（当前代码）
+## 5) 网页演示
 
-- 数据生成：DeepSeek（`deepseek-chat`）
-- 训练模型：`Qwen/Qwen2.5-7B-Instruct`（Unsloth 4-bit 加载）
-- 训练输出目录：`outputs/qwen25_7b_prompt_optimizer`
-- 推理默认 adapter：`outputs/qwen25_7b_prompt_optimizer`
+```powershell
+python scripts/web_demo.py --low-vram --port 7860
+```
 
-## 11) TODO
+可选参数：
+- `--share` — 生成公网临时链接
+- `--low-vram` — 8GB 显存优化
 
-### 已知问题
+---
 
-1. `clear` 现在还不能真正清空历史记录
-2. 存在死循环输出问题
+## 6) 模型切换
+
+训练输出目录和推理 adapter 路径对应：
+
+| 版本 | 训练输出 | 推理参数 |
+|------|---------|---------|
+| v2（当前） | `outputs/qwen25_7b_prompt_optimizer_v2` | `--adapter-path outputs/qwen25_7b_prompt_optimizer_v2` |
+| v1（旧版，不推荐） | `outputs/qwen25_7b_prompt_optimizer` | `--adapter-path outputs/qwen25_7b_prompt_optimizer` |
+
+> 两版口径不要混用：**V1** = 800 条数据（`data.old/`）/ 3 epoch / 300 step（另有 2026-03-19 那次 198 步、3 epoch 的训练）；**V2** = 400 条数据（`data/`）/ 5 epoch / 60 step。
+> 根目录 `evaluation_results.json` 只是 4 条用例的规则打分，且 `scripts/evaluate.py` 默认指向 **V1**、结果文件未记录所用 adapter 与日期，**不能当作 V2 的效果证据**。详见 [docs/training_evaluation_report.md](docs/training_evaluation_report.md)。
+
+---
+
+## 7) 显存参考
+
+| 显卡 | 推荐配置 |
+|------|---------|
+| 8GB（RTX 4060 Laptop 等） | `--low-vram`（Adapter 模式，默认显存上限 7500MiB） |
+| 12GB（RTX 3060 等） | 默认配置（训练实测：RTX 3060 12GB / 35 分钟） |
+| 16GB+ | 默认或 `--merge-lora` |

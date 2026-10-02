@@ -92,18 +92,22 @@ def looks_structured_prompt(text: str) -> bool:
         return False
 
     parts = [segment.strip() for segment in prompt.split(",") if segment.strip()]
-    if len(parts) < 6:
-        return False
-
-    keywords = [
-        "style", "shot", "camera", "lighting", "color", "palette",
-        "mood", "composition", "depth", "focus", "cinematic", "--ar",
-    ]
-    lower_prompt = prompt.lower()
-    if not any(keyword in lower_prompt for keyword in keywords):
+    if len(parts) < 5:
         return False
 
     return True
+
+
+def has_forbidden_prompt_tokens(text: str) -> bool:
+    lower_text = normalize_text(text).lower()
+    forbidden_patterns = [
+        r"--ar\b",
+        r"\baspect\s*ratio\b",
+        r"\btext\s*:\b",
+        r"\btitle\s*:\b",
+        r"\blogo\s*:\b",
+    ]
+    return any(re.search(pattern, lower_text) for pattern in forbidden_patterns)
 
 
 def extract_final_payload(text: str) -> Optional[Dict]:
@@ -192,7 +196,7 @@ def validate_sample(obj: Dict) -> bool:
             return False
         if not isinstance(message.get("content"), str) or not message.get("content").strip():
             return False
-        if len(message["content"].strip()) < 4 or len(message["content"].strip()) > 2000:
+        if len(message["content"].strip()) < 4 or len(message["content"].strip()) > 3000:
             return False
         if has_abnormal_repetition(message["content"]):
             return False
@@ -201,6 +205,21 @@ def validate_sample(obj: Dict) -> bool:
         return False
 
     final_content = normalize_text(messages[-1].get("content", ""))
+    if not (final_content.startswith("{") and final_content.endswith("}")):
+        return False
+
+    try:
+        final_obj = json.loads(final_content)
+    except Exception:
+        return False
+
+    if not isinstance(final_obj, dict):
+        return False
+
+    # 只要包含 prompt 即可，多余的 key 不拒绝（容错）
+    if "prompt" not in final_obj or not isinstance(final_obj.get("prompt"), str):
+        return False
+
     final_payload = extract_final_payload(final_content)
     if not isinstance(final_payload, dict):
         return False
@@ -208,14 +227,16 @@ def validate_sample(obj: Dict) -> bool:
     final_prompt = normalize_text(str(final_payload.get("prompt", "")))
     if not final_prompt:
         return False
+    if has_forbidden_prompt_tokens(final_prompt):
+        return False
 
     for message in messages[:-1]:
         if message["role"] == "system":
             continue
         content = normalize_text(message["content"])
-        if ascii_letter_ratio(content) > 0.35:
+        if ascii_letter_ratio(content) > 0.55:
             return False
-        if cjk_ratio(content) < 0.15:
+        if cjk_ratio(content) < 0.08:
             return False
 
     if ascii_letter_ratio(final_prompt) < 0.45:
@@ -227,6 +248,8 @@ def validate_sample(obj: Dict) -> bool:
 
     scenes = final_payload.get("scenes")
     if scenes is not None:
+        if not isinstance(final_obj.get("scenes"), list):
+            return False
         if not isinstance(scenes, list):
             return False
         if len(scenes) < 3 or len(scenes) > 4:
@@ -234,8 +257,12 @@ def validate_sample(obj: Dict) -> bool:
         for scene_item in scenes:
             if not isinstance(scene_item, dict):
                 return False
+            if "prompt" not in scene_item or not isinstance(scene_item.get("prompt"), str):
+                return False
             scene_prompt = normalize_text(str(scene_item.get("prompt", "")))
             if not scene_prompt:
+                return False
+            if has_forbidden_prompt_tokens(scene_prompt):
                 return False
             if ascii_letter_ratio(scene_prompt) < 0.45:
                 return False

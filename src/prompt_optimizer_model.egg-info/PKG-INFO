@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: prompt-optimizer-model
+Version: 0.1.0
+Summary: 面向媒体领域的提示词优化模型，包含数据生成、训练、推理和评估流程
+Requires-Python: >=3.10
+Requires-Dist: datasets
+Requires-Dist: openai
+Requires-Dist: peft
+Requires-Dist: torch
+Requires-Dist: transformers
+Requires-Dist: trl
+Requires-Dist: accelerate
+Requires-Dist: unsloth
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
